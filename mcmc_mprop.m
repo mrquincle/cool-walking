@@ -40,7 +40,7 @@ end
 function p = pdf(state, temp)
 	beta = 1/temp;
 	p = exp (-beta * potential(state));
-	% if we need to normalize, only precalculated for T=0.1, and T=3.0
+	% normalize, only precalculated for T=0.1, and T=3.0
 	if (temp == 0.1)
 		p = p / 1.4066242476099965000000000000000e+15;
 	elseif (temp == 3)
@@ -52,8 +52,8 @@ end
 
 Temp_std = 0.1;
 
-% todo: establish nonprob
-state(1)=1;
+% start at random location
+state(1)=5;
 p(1) = pdf(state(1),Temp_std);
 
 % we should start with non-zero prob, or else we have /0.
@@ -65,22 +65,26 @@ fail_jumps = 0;
 chi_resolution=0.0001;
 true_resolution=0.000001;
 
-%bar([0.1:0.1:10],sum(pdf(reshape([0.001:0.001:10],100,100)',0.1),2))
-%href = hist(pdf([0:0.001:10],0.1),0:0.1:10,1);
-
 % first reshape in 100x100 matrix and then average over rows, to be able to compare with histogram
 % href / 10000*10 is to normalize it
 href=sum(pdf(reshape([true_resolution:true_resolution:10],chi_resolution/(true_resolution),10/chi_resolution)',0.1),2)*true_resolution; 
-size(href)
+length(href)
 
 jwalking = false;
 Temp_jump = 3;
 
+% Let the MCMC sampler run over T time steps. Note that we do not include HMC gradient descent steps. Our chain
+% should henceforth convergence slower than in [1].
 for t=1:T
+	% Set the jump probability to p_jump = 0.03.
 	u = rand(1);
 	p_jump = 0.03;
 	jump = (u < p_jump);
 
+	% This is not "exactly" j-walking, but a more lazy implementation in which we do not run two chains in parallel,
+	% but jump with probability p_jump to a state in the high temperature walker. This skews the results in the 
+	% following way: the chain will only be able to reach high-temperature states jumping from low-temperature ones.
+	% Concrete. This means we might miss a mode if it is too far from the other ones.
 	if (jwalking)
 		state(t+1) = propose(state(t), false);
 		if (jump)
@@ -105,6 +109,8 @@ for t=1:T
 
 	if (mod(t,R) == 0) 
 		h0 = hist(state,chi_resolution:chi_resolution:10,1)';
+		%h0(1:1/(chi_resolution*50):1/chi_resolution)'
+		
 		conv = sqrt(sum((h0-href).^2));
 		t
 		conv
