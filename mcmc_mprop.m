@@ -5,7 +5,7 @@
 clear all;
 clf;
 
-% steps (takes a minute or two)
+% steps (takes a minute or two for 200 000 steps)
 T = 200000;
 
 % burning
@@ -19,17 +19,17 @@ R = 1000;
 
 convergence = zeros(1,T/R);
 
-% replace Hamiltonian with local uniform updates
-function new_state = propose(state, jump) 
-	dumb_jumps = true;
-
+% In this proposal we do not use a Hamiltonian, but simple local updates. It is possible to include Hamiltonian
+% updates as well later. It is an independent improvement with respect to the implemented methods.
+function new_state = propose(state, jump, method) 
 	if (jump)
-		if (dumb_jumps)
-			proposal = normrnd(0,5); % just large jumps
-		else
-			d = displacements();
-			di = d(randi(length(d)));
-			proposal = di + normrnd(0,0.1); % large jumps, with info about displacements... not 3x out of 12
+		switch(method)
+			case "informed_mixture_walking"
+				d = displacements();
+				di = d(randi(length(d)));
+				proposal = di + normrnd(0,0.1); % large jumps, with info about displacements... not 3x out of 12
+			otherwise
+				proposal = normrnd(0,5); % just large jumps
 		end
 	else 
 		proposal = normrnd(0,0.1); % micro-steps
@@ -65,13 +65,34 @@ fail_jumps = 0;
 chi_resolution=0.0001;
 true_resolution=0.000001;
 
+L=10;
+
 % first reshape in 100x100 matrix and then average over rows, to be able to compare with histogram
 % href / 10000*10 is to normalize it
-href=sum(pdf(reshape([true_resolution:true_resolution:10],chi_resolution/(true_resolution),10/chi_resolution)',0.1),2)*true_resolution; 
+%href=(sum(pdf(reshape([true_resolution:true_resolution:L],chi_resolution/(true_resolution),10/chi_resolution)',0.1),2)*true_resolution/chi_resolution);
+href=(sum(pdf(reshape([true_resolution:true_resolution:L],chi_resolution/(true_resolution),10/chi_resolution)',0.1),2)*true_resolution);
 length(href)
+sum(href)
+	
+% This is not "exactly" j-walking, but a more lazy implementation in which we do not run two chains in parallel,
+% but jump with probability p_jump to a state in the high temperature walker. This skews the results in the 
+% following way: the chain will only be able to reach high-temperature states jumping from low-temperature ones.
+% Consequence: This means we might miss a mode if it is too far from the other ones. Hence it is easy to see if this 
+% happens and we can disregard a run like that for our comparison.
 
-jwalking = false;
+method="jwalking";
+method="jwalking_simultaneously";
+method="mixture_walking";
+method="informed_mixture_walking";
+
 Temp_jump = 3;
+
+switch(method)
+	case "jwalking_simultaneously"
+		hot_state(1)=5;
+		hot_p(1) = pdf(hot_state(1), Temp_jump);
+	otherwise
+end
 
 % Let the MCMC sampler run over T time steps. Note that we do not include HMC gradient descent steps. Our chain
 % should henceforth convergence slower than in [1].
@@ -81,20 +102,34 @@ for t=1:T
 	p_jump = 0.03;
 	jump = (u < p_jump);
 
-	% This is not "exactly" j-walking, but a more lazy implementation in which we do not run two chains in parallel,
-	% but jump with probability p_jump to a state in the high temperature walker. This skews the results in the 
-	% following way: the chain will only be able to reach high-temperature states jumping from low-temperature ones.
-	% Concrete. This means we might miss a mode if it is too far from the other ones.
-	if (jwalking)
-		state(t+1) = propose(state(t), false);
-		if (jump)
-			p(t+1) = pdf(state(t+1), Temp_jump);
-		else
+	switch(method)
+		case "jwalking"
+			state(t+1) = propose(state(t), false, method);
+			if (jump)
+				p(t+1) = pdf(state(t+1), Temp_jump);
+			else
+				p(t+1) = pdf(state(t+1), Temp_std);
+			end
+		case "jwalking_simultaneously"
+			hot_state(t+1) = propose(hot_state(t), false, method);
+			hot_p(t+1) = pdf(hot_state(t+1), Temp_jump);
+			if (jump)
+				state(t+1) = hot_state(t+1);
+				% accept with low-temperature probability
+				p(t+1) = pdf(state(t+1), Temp_std);
+				%p(t+1) = hot_p(t+1);
+			else
+				state(t+1) = propose(state(t), jump, method);
+				p(t+1) = pdf(state(t+1), Temp_std);
+			end
+		case "mixture_walking"
+			state(t+1) = propose(state(t), jump, method);
 			p(t+1) = pdf(state(t+1), Temp_std);
-		end
-	else
-		state(t+1) = propose(state(t), jump);
-		p(t+1) = pdf(state(t+1), Temp_std);
+		case "informed_mixture_walking"
+			state(t+1) = propose(state(t), jump, method);
+			p(t+1) = pdf(state(t+1), Temp_std);
+		otherwise
+			printf "Unknown method\n"
 	end
 	
 	alpha = p(t+1)/p(t);
@@ -108,10 +143,14 @@ for t=1:T
 	end
 
 	if (mod(t,R) == 0) 
-		h0 = hist(state,chi_resolution:chi_resolution:10,1)';
+	%	h0 = (hist(state,chi_resolution:chi_resolution:L,1)'/chi_resolution);
+		h0 = hist(state,chi_resolution:chi_resolution:L,1)';
 		%h0(1:1/(chi_resolution*50):1/chi_resolution)'
-		
-		conv = sqrt(sum((h0-href).^2));
+	
+		% over 10.000 points we calculate all differences, hence, before the sqrt we divide by chi_resolution*L
+		%conv = sqrt(sum((h0-href).^2)*chi_resolution*L);
+		%conv = sqrt( sum((h0-href).^2)*chi_resolution*L);
+		conv = sqrt( sum((h0-href).^2));
 		t
 		conv
 		convergence(t/R) = conv;
@@ -152,3 +191,23 @@ figure(2)
 
 t=1:length(convergence);
 plot(t, convergence,'-');
+
+
+figure(3)
+plot(h0,'.b')
+hold on
+plot(href,'.r')
+title("Compare h0 with href");
+hold off
+
+figure(4)
+bins=1000;
+hist(state*bins/10,0:1:bins-1,true,'b')
+hold on
+r=sum(reshape(href,length(href)/bins,bins))';
+bar(r,'hist','g')
+axis([0 bins*0.6]); % interesting part
+title("Compare again with bar plots")
+hold off
+
+

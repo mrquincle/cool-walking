@@ -1,11 +1,16 @@
 clf
 
 L=10;
-x=0:0.001:L;
+resolution=0.0001;
+
+x=resolution:resolution:L;
 
 V=zeros(size(x));
 
 V=potential(x);
+
+h=figure(1);
+clf(h);
 
 plot(x,V, '-b', 'LineWidth',4);
 hold on
@@ -23,6 +28,7 @@ Z=sum(rho_un)/size(x,2)*L;
 Z
 
 rho=rho_un/Z;
+sum(rho)
 
 plot(x,rho, '-r', 'LineWidth',4);
 
@@ -31,11 +37,13 @@ T=0.1;
 beta=1/(k*T);
 
 rho_un=exp(-beta * V);
+printf "maximum: "
 max(rho_un)
 Z=sum(rho_un)/size(x,2)*L;
 Z
 
 rho=rho_un/Z;
+sum(rho)
 max(rho)
 
 plot(x,rho,'-g', 'LineWidth',4);
